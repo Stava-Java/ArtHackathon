@@ -1,5 +1,3 @@
-"use client";
-
 import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -7,6 +5,7 @@ import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import { OutlineEffect } from "three/examples/jsm/effects/OutlineEffect.js";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import { AuditoryArt } from "./AuditoryArt";
 
 type AssetState = "loading" | "ready" | "error";
 type PunchKind = "left" | "right" | "hook" | "stretch";
@@ -105,7 +104,7 @@ const ARM_RADIUS_PROFILE = [
 const COMIC_WHITE = 0xfffbec;
 const COMIC_BLACK = 0x090b16;
 const BOSS_MAX_HEALTH = 280;
-const BOSS_NAME = "Jack the Dripper";
+const BOSS_NAME = "El Chupacabra";
 const PLAYER_RADIUS = 0.38;
 const BOSS_RADIUS = 0.72;
 const ARENA_MIN_X = -6.15;
@@ -850,109 +849,6 @@ function normalizeModel(
   return scale;
 }
 
-// Retained for future imported-glove cleanup; procedural gloves are used today.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
-function keepLargestConnectedSurface(source: THREE.BufferGeometry) {
-  const geometry = source.clone();
-  const index = geometry.getIndex();
-  const positions = geometry.getAttribute("position");
-
-  if (!index || !positions || index.count < 3) {
-    return source;
-  }
-
-  const canonical = new Int32Array(positions.count);
-  const positionIds = new Map<string, number>();
-  let positionCount = 0;
-  for (let vertex = 0; vertex < positions.count; vertex += 1) {
-    const key = [
-      Math.round(positions.getX(vertex) * 1000),
-      Math.round(positions.getY(vertex) * 1000),
-      Math.round(positions.getZ(vertex) * 1000),
-    ].join(":");
-    let id = positionIds.get(key);
-    if (id === undefined) {
-      id = positionCount;
-      positionIds.set(key, id);
-      positionCount += 1;
-    }
-    canonical[vertex] = id;
-  }
-
-  const parents = new Int32Array(positionCount);
-  for (let vertex = 0; vertex < parents.length; vertex += 1) {
-    parents[vertex] = vertex;
-  }
-
-  const find = (vertex: number): number => {
-    let root = vertex;
-    while (parents[root] !== root) root = parents[root];
-    while (parents[vertex] !== vertex) {
-      const next = parents[vertex];
-      parents[vertex] = root;
-      vertex = next;
-    }
-    return root;
-  };
-
-  const union = (a: number, b: number) => {
-    const rootA = find(a);
-    const rootB = find(b);
-    if (rootA !== rootB) parents[rootB] = rootA;
-  };
-
-  for (let offset = 0; offset < index.count; offset += 3) {
-    const a = canonical[index.getX(offset)];
-    const b = canonical[index.getX(offset + 1)];
-    const c = canonical[index.getX(offset + 2)];
-    union(a, b);
-    union(b, c);
-  }
-
-  const components = new Map<number, number[]>();
-  for (let offset = 0; offset < index.count; offset += 3) {
-    const root = find(canonical[index.getX(offset)]);
-    const triangle = components.get(root) ?? [];
-    triangle.push(
-      index.getX(offset),
-      index.getX(offset + 1),
-      index.getX(offset + 2),
-    );
-    components.set(root, triangle);
-  }
-
-  const largest = [...components.values()].reduce(
-    (best, component) => (component.length > best.length ? component : best),
-    [] as number[],
-  );
-
-  if (!largest.length) return source;
-
-  let minY = Number.POSITIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
-  largest.forEach((vertex) => {
-    const y = positions.getY(vertex);
-    minY = Math.min(minY, y);
-    maxY = Math.max(maxY, y);
-  });
-  const cuffCutoff = minY + (maxY - minY) * 0.46;
-  const fistOnly: number[] = [];
-  for (let offset = 0; offset < largest.length; offset += 3) {
-    const a = largest[offset];
-    const b = largest[offset + 1];
-    const c = largest[offset + 2];
-    const centerY =
-      (positions.getY(a) + positions.getY(b) + positions.getY(c)) / 3;
-    if (centerY >= cuffCutoff) fistOnly.push(a, b, c);
-  }
-
-  geometry.setIndex(fistOnly.length > largest.length * 0.2 ? fistOnly : largest);
-  const isolated = geometry.toNonIndexed();
-  isolated.computeBoundingBox();
-  isolated.computeBoundingSphere();
-  return isolated;
-}
-
 function createClosedGlove(
   gradientMap: THREE.Texture,
   whiteOutline: THREE.MeshBasicMaterial,
@@ -1178,6 +1074,7 @@ export function AssetLab() {
   const [stretchCharge, setStretchCharge] = useState(0);
   const [bossTell, setBossTell] = useState("");
   const [combatMessage, setCombatMessage] = useState("");
+  const [soundCombo, setSoundCombo] = useState(0);
   const [parryActive, setParryActive] = useState(false);
   const [aimLocked, setAimLocked] = useState(false);
   const [easyMode, setEasyMode] = useState(false);
@@ -1208,6 +1105,9 @@ export function AssetLab() {
 
     const mount = mountRef.current;
     let disposed = false;
+    const auditoryArt = new AuditoryArt((combo) => {
+      if (!disposed) setSoundCombo(combo);
+    });
     let animationFrame = 0;
     let mixer: THREE.AnimationMixer | null = null;
     let currentAction: THREE.AnimationAction | null = null;
@@ -1255,7 +1155,6 @@ export function AssetLab() {
     let forcedNextAttack: BossAttackKind | null = null;
     let revealStartedAt = 0;
     let revealStartPosition = new THREE.Vector3();
-    let revealStartQuaternion = new THREE.Quaternion();
     let revealFinished = false;
     let revealWon = true;
     let easyModeActive = false;
@@ -1282,7 +1181,6 @@ export function AssetLab() {
     let bossImpactStrength = 0;
     let paintEventCounter = 0;
     let movementPaintColor = VISIBLE_PAINT_COLORS[0];
-    let audioContext: AudioContext | null = null;
     const paintedCells = new Set<string>();
     const paintLayerDepth = new Uint8Array(
       PAINT_LAYER_GRID_SIZE * PAINT_LAYER_GRID_SIZE,
@@ -2873,121 +2771,6 @@ export function AssetLab() {
       markPaintTextureDirty();
     };
 
-    const ensureAudio = () => {
-      if (!audioContext) audioContext = new AudioContext();
-      if (audioContext.state === "suspended") void audioContext.resume();
-      return audioContext;
-    };
-
-    const playImpactSound = (
-      weight: "jab" | "hook" | "parry" | "hurt" | "shot",
-    ) => {
-      const context = ensureAudio();
-      const now = context.currentTime;
-      const oscillator = context.createOscillator();
-      const gain = context.createGain();
-      const frequency =
-        weight === "hook"
-          ? 62
-          : weight === "parry"
-            ? 720
-            : weight === "hurt"
-              ? 82
-              : weight === "shot"
-                ? 180
-                : 105;
-      oscillator.type = weight === "parry" ? "triangle" : "sine";
-      oscillator.frequency.setValueAtTime(frequency, now);
-      oscillator.frequency.exponentialRampToValueAtTime(
-        Math.max(38, frequency * 0.42),
-        now + (weight === "hook" ? 0.18 : 0.1),
-      );
-      gain.gain.setValueAtTime(weight === "hook" ? 0.26 : 0.16, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.2);
-      oscillator.connect(gain).connect(context.destination);
-      oscillator.start(now);
-      oscillator.stop(now + 0.22);
-
-      const noiseLength = Math.floor(context.sampleRate * 0.12);
-      const noiseBuffer = context.createBuffer(1, noiseLength, context.sampleRate);
-      const noise = noiseBuffer.getChannelData(0);
-      for (let index = 0; index < noise.length; index += 1) {
-        noise[index] = (Math.random() * 2 - 1) * (1 - index / noise.length);
-      }
-      const source = context.createBufferSource();
-      const noiseGain = context.createGain();
-      source.buffer = noiseBuffer;
-      source.playbackRate.value = 0.96 + Math.random() * 0.08;
-      noiseGain.gain.setValueAtTime(weight === "hook" ? 0.2 : 0.11, now);
-      noiseGain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
-      source.connect(noiseGain).connect(context.destination);
-      source.start(now);
-
-      if (weight === "hook") {
-        const crack = context.createOscillator();
-        const crackGain = context.createGain();
-        crack.type = "square";
-        crack.frequency.setValueAtTime(210, now);
-        crack.frequency.exponentialRampToValueAtTime(74, now + 0.045);
-        crackGain.gain.setValueAtTime(0.075, now);
-        crackGain.gain.exponentialRampToValueAtTime(0.001, now + 0.052);
-        crack.connect(crackGain).connect(context.destination);
-        crack.start(now);
-        crack.stop(now + 0.06);
-
-        const splatLength = Math.floor(context.sampleRate * 0.19);
-        const splatBuffer = context.createBuffer(
-          1,
-          splatLength,
-          context.sampleRate,
-        );
-        const splatNoise = splatBuffer.getChannelData(0);
-        for (let index = 0; index < splatNoise.length; index += 1) {
-          const progress = index / splatNoise.length;
-          splatNoise[index] =
-            (Math.random() * 2 - 1) *
-            Math.sin(progress * Math.PI) *
-            (1 - progress * 0.72);
-        }
-        const splat = context.createBufferSource();
-        const splatFilter = context.createBiquadFilter();
-        const splatGain = context.createGain();
-        splat.buffer = splatBuffer;
-        splatFilter.type = "lowpass";
-        splatFilter.frequency.value = 620;
-        splatFilter.Q.value = 1.4;
-        splatGain.gain.setValueAtTime(0.001, now);
-        splatGain.gain.linearRampToValueAtTime(0.14, now + 0.016);
-        splatGain.gain.exponentialRampToValueAtTime(0.001, now + 0.18);
-        splat.connect(splatFilter).connect(splatGain).connect(context.destination);
-        splat.start(now + 0.012);
-      }
-    };
-
-    const playWhoosh = (strength = 1) => {
-      const context = ensureAudio();
-      const now = context.currentTime;
-      const noiseLength = Math.floor(context.sampleRate * 0.11);
-      const noiseBuffer = context.createBuffer(1, noiseLength, context.sampleRate);
-      const noise = noiseBuffer.getChannelData(0);
-      for (let index = 0; index < noise.length; index += 1) {
-        noise[index] =
-          (Math.random() * 2 - 1) *
-          Math.sin((index / noise.length) * Math.PI);
-      }
-      const source = context.createBufferSource();
-      const filter = context.createBiquadFilter();
-      const gain = context.createGain();
-      source.buffer = noiseBuffer;
-      filter.type = "bandpass";
-      filter.frequency.value = 760 + strength * 420;
-      filter.Q.value = 0.8;
-      gain.gain.setValueAtTime(0.025 + strength * 0.035, now);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.11);
-      source.connect(filter).connect(gain).connect(context.destination);
-      source.start(now);
-    };
-
     // A fixed-capacity InstancedMesh replaces what used to be up to 120
     // individually allocated THREE.Mesh particles (up to 120 extra draw
     // calls during a flurry of hits) with a single draw call; "dead" slots
@@ -3138,6 +2921,7 @@ export function AssetLab() {
       color: string,
       strength = 1,
       finisher = false,
+      paintGesture?: { kind: PunchKind; charge: number; loaded: boolean },
     ) => {
       const now = performance.now();
       hitStopUntil = Math.max(
@@ -3172,7 +2956,12 @@ export function AssetLab() {
         Math.round((kind === "hook" ? 18 : kind === "parry" ? 12 : 8) * strength),
         (kind === "hook" ? 2.1 : 1.25) * strength,
       );
-      playImpactSound(kind);
+      auditoryArt.playImpact(paintGesture?.kind ?? kind, color, strength, {
+        buildCombo: Boolean(paintGesture),
+        charge: paintGesture?.charge,
+        finisher,
+        loaded: paintGesture?.loaded,
+      });
       triggerFlash(
         kind === "hook" ? color : "#ffffff",
         kind === "hook" ? 0.42 * strength : 0.28 * strength,
@@ -3204,7 +2993,6 @@ export function AssetLab() {
       setStretchCharge(0);
       revealStartedAt = now;
       revealStartPosition = camera.position.clone();
-      revealStartQuaternion = camera.quaternion.clone();
       finisherFreezeUntil = now;
       finisherFlightStarted = false;
       finisherFlightLastAt = now;
@@ -3227,6 +3015,7 @@ export function AssetLab() {
       controls.enabled = false;
       setCombatMessage("");
       combatMessageUntil = 0;
+      auditoryArt.finish(won);
       if (document.pointerLockElement === renderer.domElement) {
         void document.exitPointerLock?.();
       }
@@ -3318,6 +3107,7 @@ export function AssetLab() {
         impactColor,
         kind === "stretch" ? 0.85 + charge * 0.7 : loadedHook ? 1.35 : 1,
         willKnockOut,
+        { kind, charge, loaded: loadedHook },
       );
 
       if (loadedHook) {
@@ -3378,7 +3168,8 @@ export function AssetLab() {
           : actualKind === "stretch"
             ? 720 + charge * 180
             : 360);
-      playWhoosh(
+      auditoryArt.playGesture(
+        actualKind,
         actualKind === "hook"
           ? 1.4
           : actualKind === "stretch"
@@ -3470,6 +3261,7 @@ export function AssetLab() {
       sidestepReadyAt = now + 650;
       sidestepUntil = now + 220;
       cutWhiteStreak(worldToPaint(before), worldToPaint(camera.position), 26);
+      auditoryArt.playDash();
       showCombatMessage("SLIP", 420);
     };
 
@@ -3505,7 +3297,7 @@ export function AssetLab() {
       controls.enabled = false;
       firstPersonRig.visible = true;
       playAnimation("Idle");
-      ensureAudio();
+      void auditoryArt.start();
       requestAimCapture();
     };
 
@@ -4164,7 +3956,7 @@ export function AssetLab() {
         lastTrailAt: 0,
         reflected: false,
       });
-      playImpactSound("shot");
+      auditoryArt.playImpact("shot", "#14f1ff", 0.8);
     };
 
     const resolveBossAttack = (attack: BossAttack, now: number) => {
@@ -5228,6 +5020,7 @@ export function AssetLab() {
       toonGradient.dispose();
       whiteOutline.dispose();
       blackOutline.dispose();
+      auditoryArt.dispose();
       if (renderer.domElement.parentElement === mount) {
         mount.removeChild(renderer.domElement);
       }
@@ -5292,6 +5085,17 @@ export function AssetLab() {
         </section>
       )}
 
+      {gamePhase === "fighting" && soundCombo > 1 && (
+        <div className="sound-combo" role="status" aria-live="polite">
+          <span>Sonic combo</span>
+          <strong>×{soundCombo}</strong>
+          <i aria-hidden="true" />
+          <i aria-hidden="true" />
+          <i aria-hidden="true" />
+          <i aria-hidden="true" />
+        </div>
+      )}
+
       {(gamePhase === "loading" || gamePhase === "ready") && (
         <section className="start-experience" aria-label="Boxing Canvas">
           <h2 className="paint-title" aria-label="Boxing Canvas">
@@ -5322,6 +5126,28 @@ export function AssetLab() {
               <i>a</i>
               <i>t</i>
               <i>h</i>
+            </span>
+          </p>
+          <p
+            className="auditory-tagline"
+            aria-label="Every brushstroke becomes a note"
+          >
+            <span className="sonic-wave" aria-hidden="true">
+              <i /><i /><i /><i /><i />
+            </span>
+            <span className="sonic-phrase" aria-hidden="true">
+              {["Every", "brushstroke", "becomes", "a", "note"].map(
+                (word) => (
+                  <strong className="sonic-word" key={word}>
+                    {Array.from(word).map((letter, index) => (
+                      <i key={`${word}-${index}`}>{letter}</i>
+                    ))}
+                  </strong>
+                ),
+              )}
+            </span>
+            <span className="sonic-wave sonic-wave-reverse" aria-hidden="true">
+              <i /><i /><i /><i /><i />
             </span>
           </p>
           <label className="easy-mode-toggle">
