@@ -1,0 +1,5 @@
+{
+  "buildCommand": "npx vite build --config vite.vercel.config.ts",
+  "outputDirectory": "dist-vercel",
+  "framework": null
+}

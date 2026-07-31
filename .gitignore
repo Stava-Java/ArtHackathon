@@ -1,0 +1,46 @@
+.vercel
+.DS_Store
+Thumbs.db
+*.pem
+.env
+.env.*
+!.env.example
+
+**/node_modules/
+**/.npm-cache/
+**/.pnp
+**/.pnp.*
+
+**/.next/
+**/.vinext/
+**/out/
+**/dist/
+**/dist-vercel/
+**/.wrangler/
+**/coverage/
+**/*.tsbuildinfo
+**/next-env.d.ts
+
+**/tmp/
+**/work/
+**/outputs/
+**/raw-assets/
+
+# source Mixamo dumps (not needed to run)
+*.fbx
+
+# local notes / planning docs
+About.md
+Buildable_Art_Ideas.md
+GAME_BUILD_PLAN.md
+Game_To_Art_Concept.md
+Hackathon_Ideas.md
+Resources.md
+
+# duplicate root meshes (runtime copies live in game/public)
+/boxing_ring.glb
+/boxing_gloves_-_right_handed.glb
+
+.idea/
+.vscode/
+*.swp
